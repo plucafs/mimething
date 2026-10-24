@@ -93,6 +93,29 @@ fn full_height_separator(ui: &mut egui::Ui) {
     ui.add(egui::Separator::default().grow(8.0));
 }
 
+/// Rounded placeholder tile with the first letter of `label`, same size as a real icon.
+fn placeholder_icon(ui: &mut egui::Ui, label: &str, size: f32) {
+    let initial = label
+        .chars()
+        .next()
+        .unwrap_or('?')
+        .to_uppercase()
+        .to_string();
+    egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .corner_radius(4.0)
+        .inner_margin(0.0)
+        .show(ui, |ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(size, size),
+                egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                |ui| {
+                    ui.label(egui::RichText::new(initial).small());
+                },
+            );
+        });
+}
+
 fn worker_count() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
@@ -587,7 +610,7 @@ impl App {
                 if let Some(uri) = &cat.icon {
                     ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
                 } else {
-                    ui.label("  ");
+                    placeholder_icon(ui, cat.name, 24.0);
                 }
                 ui.add_space(6.0);
                 if ui
@@ -738,7 +761,7 @@ impl App {
                                     egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)),
                                 );
                             } else {
-                                ui.label("  ");
+                                placeholder_icon(ui, &app.name, 24.0);
                             }
                             ui.add_space(6.0);
                             let r = ui.add(
@@ -850,50 +873,29 @@ impl App {
         }
         let mut summary: HashMap<&str, usize> = HashMap::new();
         for (_, d) in &self.current_defaults {
-            *summary.entry(d.as_deref().unwrap_or("(none)")).or_insert(0) += 1;
+            if let Some(id) = d.as_deref() {
+                *summary.entry(id).or_insert(0) += 1;
+            }
+        }
+        if summary.is_empty() {
+            ui.label("(none)");
+            return;
         }
         let mut items: Vec<(&str, usize)> = summary.into_iter().collect();
         items.sort_by_key(|(id, count)| (std::cmp::Reverse(*count), *id));
         for (id, count) in items.iter().take(10) {
-            if *id == "(none)" {
-                ui.label("  • (none)");
-                continue;
-            }
-            let icon = self
-                .apps
-                .iter()
-                .find(|a| a.id == *id)
-                .and_then(|a| icons::icon_uri(&a.icon));
+            let app_icon = self.apps.iter().find(|a| a.id == *id).map(|a| a.icon.clone());
+            let app_name = self.app_name(id).to_string();
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
-                if let Some(uri) = &icon {
-                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(20.0, 20.0)));
-                } else {
-                    let initial = self
-                        .app_name(id)
-                        .chars()
-                        .next()
-                        .unwrap_or('?')
-                        .to_uppercase()
-                        .to_string();
-                    egui::Frame::new()
-                        .fill(ui.visuals().faint_bg_color)
-                        .corner_radius(4.0)
-                        .inner_margin(0.0)
-                        .show(ui, |ui| {
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(20.0, 20.0),
-                                egui::Layout::centered_and_justified(
-                                    egui::Direction::TopDown,
-                                ),
-                                |ui| {
-                                    ui.label(egui::RichText::new(initial).small());
-                                },
-                            );
-                        });
+                match app_icon.as_deref().and_then(icons::icon_uri) {
+                    Some(uri) => {
+                        ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(20.0, 20.0)));
+                    }
+                    None => placeholder_icon(ui, &app_name, 20.0),
                 }
                 ui.add_space(4.0);
-                ui.label(format!("{} ({count})", self.app_name(id)));
+                ui.label(format!("{app_name} ({count})"));
             });
         }
         if items.len() > 10 {
@@ -956,54 +958,63 @@ impl App {
             .iter()
             .map(|c| c.desktop_id.as_str())
             .collect();
+        enum CandRowRef<'a> {
+            Declaring(&'a Candidate),
+            Other(&'a DesktopApp),
+        }
+        let mut rows: Vec<CandRowRef<'_>> = Vec::with_capacity(self.candidates.len());
+        rows.extend(self.candidates.iter().map(CandRowRef::Declaring));
+        if show_all {
+            rows.extend(
+                self.apps
+                    .iter()
+                    .filter(|a| !declaring_ids.contains(a.id.as_str()))
+                    .map(CandRowRef::Other),
+            );
+        }
+        const CAND_ROW_H: f32 = 52.0;
         egui::ScrollArea::vertical()
             .id_salt("right_apps")
             .auto_shrink([false, false])
-            .show(ui, |ui| {
-                egui::Grid::new("candidates")
-                    .num_columns(3)
-                    .spacing([8.0, 2.0])
-                    .min_col_width(0.0)
-                    .show(ui, |ui| {
-                        for c in &self.candidates {
+            .show_rows(ui, CAND_ROW_H, rows.len(), |ui, range| {
+                for idx in range {
+                    match &rows[idx] {
+                        CandRowRef::Declaring(c) => {
+                            let extra = if cat_total > 0 {
+                                format!("{} / {}", c.coverage, cat_total)
+                            } else {
+                                c.desktop_id.clone()
+                            };
                             Self::candidate_row(
                                 ui,
                                 &c.name,
                                 &c.icon,
-                                &if cat_total > 0 {
-                                    format!("{} / {}", c.coverage, cat_total)
-                                } else {
-                                    c.desktop_id.clone()
-                                },
+                                &extra,
                                 &c.desktop_id,
                                 self.selected_candidate.as_deref()
                                     == Some(c.desktop_id.as_str()),
                                 &mut actions,
                             );
                         }
-                        if show_all {
-                            for app in &self.apps {
-                                if declaring_ids.contains(app.id.as_str()) {
-                                    continue;
-                                }
-                                let icon = icons::icon_uri(&app.icon);
-                                let extra = if cat_total > 0 {
-                                    "—".to_string()
-                                } else {
-                                    app.id.clone()
-                                };
-                                Self::candidate_row(
-                                    ui,
-                                    &app.name,
-                                    &icon,
-                                    &extra,
-                                    &app.id,
-                                    self.selected_candidate.as_deref() == Some(app.id.as_str()),
-                                    &mut actions,
-                                );
-                            }
+                        CandRowRef::Other(app) => {
+                            let icon = icons::icon_uri(&app.icon);
+                            let extra = if cat_total > 0 {
+                                "—".to_string()
+                            } else {
+                                app.id.clone()
+                            };
+                            Self::candidate_row(
+                                ui,
+                                &app.name,
+                                &icon,
+                                &extra,
+                                &app.id,
+                                self.selected_candidate.as_deref() == Some(app.id.as_str()),
+                                &mut actions,
+                            );
                         }
-                    });
+                    }
+                }
             });
         if let Some(id) = actions.clicked {
             self.selected_candidate = Some(id);
@@ -1041,58 +1052,66 @@ impl App {
         selected: bool,
         actions: &mut CandRowActions,
     ) {
-        if let Some(uri) = icon {
-            ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(128.0, 128.0)));
+        let frame = if selected {
+            egui::Frame::new()
+                .fill(ui.visuals().selection.bg_fill)
+                .corner_radius(2.0)
         } else {
-            ui.label("  ");
-        }
-        let resp1 = ui
-            .allocate_ui_with_layout(
-                egui::vec2(220.0, 20.0),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.add(
-                        egui::Label::new(name)
-                            .truncate()
-                            .sense(egui::Sense::click()),
+            egui::Frame::new()
+        };
+        frame.show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_min_height(24.0);
+                if let Some(uri) = icon {
+                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
+                } else {
+                    placeholder_icon(ui, name, 24.0);
+                }
+                let resp1 = ui
+                    .allocate_ui_with_layout(
+                        egui::vec2(220.0, 20.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(name)
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            )
+                        },
                     )
-                },
-            )
-            .inner;
-        let resp2 = ui.allocate_ui_with_layout(
-            egui::vec2(90.0, 20.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(extra).weak())
-                        .truncate()
-                        .sense(egui::Sense::click()),
-                )
-            },
-        );
-        let resp2 = resp2.inner;
-        resp1.clone().context_menu(|ui| {
-            if ui.button("Set as default").clicked() {
-                actions.menu = Some(CandMenu::SetDefault(desktop_id.to_string()));
-                ui.close();
-            }
-            if ui.button("Open .desktop file").clicked() {
-                actions.menu = Some(CandMenu::OpenDesktop(desktop_id.to_string()));
-                ui.close();
-            }
-            if ui.button("Remove override (system default)").clicked() {
-                actions.menu = Some(CandMenu::RemoveOverride);
-                ui.close();
-            }
+                    .inner;
+                let resp2 = ui
+                    .allocate_ui_with_layout(
+                        egui::vec2(90.0, 20.0),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(extra).weak())
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            )
+                        },
+                    )
+                    .inner;
+                resp1.clone().context_menu(|ui| {
+                    if ui.button("Set as default").clicked() {
+                        actions.menu = Some(CandMenu::SetDefault(desktop_id.to_string()));
+                        ui.close();
+                    }
+                    if ui.button("Open .desktop file").clicked() {
+                        actions.menu = Some(CandMenu::OpenDesktop(desktop_id.to_string()));
+                        ui.close();
+                    }
+                    if ui.button("Remove override (system default)").clicked() {
+                        actions.menu = Some(CandMenu::RemoveOverride);
+                        ui.close();
+                    }
+                });
+                if resp1.clicked() || resp2.clicked() {
+                    actions.clicked = Some(desktop_id.to_string());
+                }
+            });
         });
-        if resp1.clicked() || resp2.clicked() {
-            actions.clicked = Some(desktop_id.to_string());
-        }
-        if selected {
-            resp1.highlight();
-            resp2.highlight();
-        }
-        ui.end_row();
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context, theme: egui::Theme) {
