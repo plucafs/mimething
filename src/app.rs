@@ -608,9 +608,9 @@ impl App {
             ui.horizontal(|ui| {
                 ui.set_min_height(26.0);
                 if let Some(uri) = &cat.icon {
-                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
+                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(32.0, 32.0)));
                 } else {
-                    placeholder_icon(ui, cat.name, 24.0);
+                    placeholder_icon(ui, cat.name, 32.0);
                 }
                 ui.add_space(6.0);
                 if ui
@@ -1081,9 +1081,9 @@ impl App {
             ui.horizontal(|ui| {
                 ui.set_min_height(24.0);
                 if let Some(uri) = icon {
-                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
+                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(32.0, 32.0)));
                 } else {
-                    placeholder_icon(ui, name, 24.0);
+                    placeholder_icon(ui, name, 32.0);
                 }
                 let resp1 = ui
                     .allocate_ui_with_layout(
@@ -1318,18 +1318,16 @@ impl eframe::App for App {
             });
 
         egui::Panel::bottom("status").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "mimething {} · {} MIME types · {} applications",
-                    env!("CARGO_PKG_VERSION"),
-                    self.all_mimes.len(),
-                    self.apps.len()
-                ));
-                if !self.status.is_empty() {
-                    ui.separator();
-                    ui.label(&self.status);
-                }
-            });
+            if !self.status.is_empty() {
+                ui.label(&self.status);
+                ui.separator();
+            }
+            ui.label(format!(
+                "mimething {} · {} MIME types · {} applications",
+                env!("CARGO_PKG_VERSION"),
+                self.all_mimes.len(),
+                self.apps.len()
+            ));
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
