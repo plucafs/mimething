@@ -1,7 +1,14 @@
 [package]
 name = "mimething"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+authors = ["plucafs <plucafz@proton.me>"]
+
+[package.metadata.wix]
+upgrade-guid = "8D7D1A67-7FA1-4440-86F0-F331D33E71A9"
+path-guid = "0EFE81AF-37C5-4ADD-8E2A-6E62250FB821"
+license = false
+eula = false
 
 [dependencies]
 eframe = "0.36.2"
@@ -9,3 +16,8 @@ egui = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["image", "file"] }
 fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
 fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
