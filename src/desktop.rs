@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub struct DesktopApp {
     pub id: String,
     pub name: String,
+    pub icon: String,
     pub mimes: Vec<String>,
 }
 
@@ -26,6 +27,7 @@ fn parse_desktop_file(path: &PathBuf) -> Option<DesktopApp> {
     let mut in_entry = false;
     let mut typ = String::new();
     let mut name = String::new();
+    let mut icon = String::new();
     let mut mimes = Vec::new();
     let mut no_display = false;
     let mut hidden = false;
@@ -45,6 +47,7 @@ fn parse_desktop_file(path: &PathBuf) -> Option<DesktopApp> {
         match key {
             "Type" => typ = value.to_string(),
             "Name" => name = value.to_string(),
+            "Icon" => icon = value.to_string(),
             "NoDisplay" => no_display = value == "true",
             "Hidden" => hidden = value == "true",
             "MimeType" => {
@@ -62,7 +65,12 @@ fn parse_desktop_file(path: &PathBuf) -> Option<DesktopApp> {
         return None;
     }
     let id = path.file_name()?.to_string_lossy().to_string();
-    Some(DesktopApp { id, name, mimes })
+    Some(DesktopApp {
+        id,
+        name,
+        icon,
+        mimes,
+    })
 }
 
 pub fn load_apps() -> Vec<DesktopApp> {

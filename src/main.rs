@@ -3,6 +3,7 @@
 mod app;
 mod categories;
 mod desktop;
+mod icons;
 mod mime;
 mod settings;
 

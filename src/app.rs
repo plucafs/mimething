@@ -7,6 +7,7 @@ use eframe::egui;
 
 use crate::categories::{CATEGORIES, CategoryKind};
 use crate::desktop::{self, DesktopApp};
+use crate::icons;
 use crate::mime;
 use crate::settings;
 
@@ -18,6 +19,7 @@ struct ExpandedCategory {
 struct Candidate {
     desktop_id: String,
     name: String,
+    icon: Option<String>,
     coverage: usize,
 }
 
@@ -73,6 +75,7 @@ impl App {
             .all_styles_mut(|style| rendering.apply_to_visuals(&mut style.visuals));
         cc.egui_ctx
             .all_styles_mut(|style| style.interaction.selectable_labels = false);
+        egui_extras::install_image_loaders(&cc.egui_ctx);
 
         let settings = settings::load();
         if let Some(theme) = settings.theme {
@@ -161,11 +164,12 @@ impl App {
                 if coverage == 0 {
                     None
                 } else {
-                    Some(Candidate {
-                        desktop_id: app.id.clone(),
-                        name: app.name.clone(),
-                        coverage,
-                    })
+                Some(Candidate {
+                    desktop_id: app.id.clone(),
+                    name: app.name.clone(),
+                    icon: icons::icon_uri(&app.icon),
+                    coverage,
+                })
                 }
             })
             .collect();
@@ -383,11 +387,8 @@ impl App {
         }
     }
 
-    fn ui_right(&mut self, ui: &mut egui::Ui) {
-        if self.selection == Selection::None {
-            ui.centered_and_justified(|ui| {
-                ui.label("Select a category or a MIME type on the left");
-            });
+    fn ui_right_content(&mut self, ui: &mut egui::Ui) {
+        if matches!(self.selection, Selection::None) {
             return;
         }
 
@@ -398,7 +399,38 @@ impl App {
             Selection::Mime(i) => self.all_mimes[i].clone(),
             Selection::None => unreachable!(),
         };
+        ui.add_space(8.0);
+        let button_text = if matches!(self.selection, Selection::Category(_)) {
+            let total = match self.selection {
+                Selection::Category(i) => self.categories[i].mimes.len(),
+                _ => 0,
+            };
+            format!("Set as default for all {total} types")
+        } else {
+            "Set as default".to_string()
+        };
+        let can_apply = self.selected_candidate.is_some() && !self.job.is_some();
+
         ui.heading(&title);
+        ui.add_space(4.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.set_max_width(160.0);
+            if ui
+                .add_enabled(
+                    can_apply,
+                    egui::Button::new(button_text),
+                )
+                .clicked()
+            {
+                let desktop_id = self.selected_candidate.clone().unwrap();
+                let mimes = self.selection_mimes();
+                if mimes.len() == 1 {
+                    self.set_single(&desktop_id, &mimes[0]);
+                } else {
+                    self.set_category(&desktop_id, &mimes);
+                }
+            }
+        });
         ui.add_space(8.0);
 
         if !self.current_defaults.is_empty() {
@@ -458,59 +490,34 @@ impl App {
             _ => 0,
         };
         let mut cand_clicked: Option<usize> = None;
-        egui::ScrollArea::vertical()
-            .id_salt("candidates")
-            .max_height(360.0)
-            .auto_shrink([false, false])
+        egui::Grid::new("candidates")
+            .num_columns(3)
+            .spacing([8.0, 2.0])
+            .min_col_width(0.0)
             .show(ui, |ui| {
                 for (idx, c) in self.candidates.iter().enumerate() {
+                    if let Some(uri) = &c.icon {
+                        ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(128.0, 128.0)));
+                    } else {
+                        ui.label("  ");
+                    }
                     let selected =
                         self.selected_candidate.as_deref() == Some(c.desktop_id.as_str());
-                    let label = if cat_total > 0 {
-                        format!("{}  —  {} / {} types", c.name, c.coverage, cat_total)
+                    let extra = if cat_total > 0 {
+                        format!("{} / {}", c.coverage, cat_total)
                     } else {
-                        format!("{}  ({})", c.name, c.desktop_id)
+                        c.desktop_id.clone()
                     };
-                    if ui.selectable_label(selected, label).clicked() {
+                    let resp1 = ui.selectable_label(selected, &c.name);
+                    let resp2 = ui.selectable_label(selected, egui::RichText::new(&extra).weak());
+                    if resp1.clicked() || resp2.clicked() {
                         cand_clicked = Some(idx);
                     }
+                    ui.end_row();
                 }
             });
         if let Some(idx) = cand_clicked {
             self.selected_candidate = Some(self.candidates[idx].desktop_id.clone());
-        }
-
-        ui.add_space(12.0);
-        let can_apply = self.selected_candidate.is_some();
-        let button_text = match self.selection {
-            Selection::Category(i) => {
-                format!(
-                    "Set as default for all {} types",
-                    self.categories[i].mimes.len()
-                )
-            }
-            _ => "Set as default".to_string(),
-        };
-        if ui
-            .add_enabled(
-                can_apply,
-                egui::Button::new(button_text),
-            )
-            .clicked()
-        {
-            let desktop_id = self.selected_candidate.clone().unwrap();
-            let mimes = self.selection_mimes();
-            if mimes.len() == 1 {
-                self.set_single(&desktop_id, &mimes[0]);
-            } else {
-                self.set_category(&desktop_id, &mimes);
-            }
-        }
-
-        if !self.status.is_empty() {
-            ui.add_space(12.0);
-            ui.separator();
-            ui.label(&self.status);
         }
     }
 }
@@ -547,10 +554,7 @@ impl eframe::App for App {
                         .iter()
                         .find(|s| **s > current + 0.03)
                         .unwrap_or(&steps[0]);
-                    if ui
-                        .button(format!("Scale UI"))
-                        .clicked()
-                    {
+                    if ui.button("Scale UI").clicked() {
                         ctx.set_pixels_per_point(next);
                         self.settings.scale = Some(next);
                         settings::save(&self.settings);
@@ -586,11 +590,17 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
+            if self.selection == Selection::None {
+                ui.centered_and_justified(|ui| {
+                    ui.label("Select a category or a MIME type on the left");
+                });
+                return;
+            }
             egui::ScrollArea::vertical()
                 .id_salt("right")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    self.ui_right(ui);
+                    self.ui_right_content(ui);
                 });
         });
     }

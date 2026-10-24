@@ -6,5 +6,6 @@ edition = "2024"
 [dependencies]
 eframe = "0.36.2"
 egui = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["image", "file"] }
 fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
 fastframe-text = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" }
