@@ -47,6 +47,11 @@ enum Msg {
     SingleSet(Result<(), String>),
 }
 
+/// Horizontal separator spanning the full panel width, ignoring the frame inner margin (8px).
+fn full_width_separator(ui: &mut egui::Ui) {
+    ui.add(egui::Separator::default().horizontal().grow(8.0));
+}
+
 pub struct App {
     all_mimes: Vec<String>,
     apps: Vec<DesktopApp>,
@@ -356,7 +361,7 @@ impl App {
             self.on_select_mimes(mimes);
         }
 
-        ui.separator();
+        full_width_separator(ui);
         ui.heading("All MIME types");
         ui.add_space(4.0);
         ui.add(
@@ -595,7 +600,7 @@ impl eframe::App for App {
                 });
             });
             ui.add_space(8.0);
-            ui.separator();
+            full_width_separator(ui);
 
             egui::ScrollArea::vertical()
                 .id_salt("right")
