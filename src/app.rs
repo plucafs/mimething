@@ -88,6 +88,49 @@ fn full_width_separator(ui: &mut egui::Ui) {
     ui.add(egui::Separator::default().horizontal().grow(8.0));
 }
 
+/// Vertical separator spanning the full panel height, ignoring the frame inner margin (8px).
+fn full_height_separator(ui: &mut egui::Ui) {
+    ui.add(egui::Separator::default().grow(8.0));
+}
+
+fn worker_count() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(2, 8)
+}
+
+/// Run `f` over `items` on a small thread pool. Results keep input order.
+fn run_parallel<T, R, F>(items: Vec<T>, f: F) -> Vec<R>
+where
+    T: Send + 'static,
+    R: Send + 'static,
+    F: Fn(T) -> R + Send + Sync + 'static,
+{
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let workers = worker_count().min(items.len());
+    let chunk = items.len().div_ceil(workers);
+    let f = Arc::new(f);
+    let mut handles = Vec::with_capacity(workers);
+    let mut iter = items.into_iter();
+    for _ in 0..workers {
+        let part: Vec<T> = iter.by_ref().take(chunk).collect();
+        if part.is_empty() {
+            break;
+        }
+        let f = Arc::clone(&f);
+        handles.push(thread::spawn(move || {
+            part.into_iter().map(|x| f(x)).collect::<Vec<R>>()
+        }));
+    }
+    handles
+        .into_iter()
+        .flat_map(|h| h.join().unwrap_or_default())
+        .collect()
+}
+
 pub struct App {
     all_mimes: Vec<String>,
     mime_exts: HashMap<String, Vec<String>>,
@@ -296,11 +339,10 @@ impl App {
         } else {
             let tx = self.msg_tx.clone();
             thread::spawn(move || {
-                let mut results = Vec::with_capacity(mimes.len());
-                for m in &mimes {
-                    let d = mime::query_default(m);
-                    results.push((m.clone(), d));
-                }
+                let results = run_parallel(mimes, |m: String| {
+                    let d = mime::query_default(&m);
+                    (m, d)
+                });
                 tx.send(Msg::DefaultsLoaded(results)).ok();
             });
         }
@@ -347,38 +389,43 @@ impl App {
         let desktop_id = desktop_id.to_string();
         let mimes: Vec<String> = mimes.to_vec();
         thread::spawn(move || {
-            let mut failed = 0usize;
             let total = mimes.len();
-            let mut restores: Vec<(String, String)> = Vec::new();
-            for (i, m) in mimes.iter().enumerate() {
-                if cancel.load(Ordering::Relaxed) {
-                    progress.lock().unwrap().running = false;
-                    tx.send(Msg::BulkFinished {
-                        failed,
-                        total,
-                        cancelled: true,
-                        restores,
-                    })
-                    .ok();
-                    return;
-                }
-                match mime::set_default(&desktop_id, m) {
-                    Ok(()) => {
-                        if let Some(Some(prev)) = prev_map.get(m) {
-                            restores.push((m.clone(), prev.clone()));
+            let results: Vec<Option<(String, String)>> = run_parallel(mimes, {
+                let desktop_id = desktop_id.clone();
+                let progress = Arc::clone(&progress);
+                let cancel = Arc::clone(&cancel);
+                let prev_map = prev_map.clone();
+                move |m: String| {
+                    if cancel.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                    let ok = mime::set_default(&desktop_id, &m).is_ok();
+                    {
+                        let mut p = progress.lock().unwrap();
+                        p.done += 1;
+                        if !ok {
+                            p.failed += 1;
                         }
                     }
-                    Err(_) => failed += 1,
+                    if ok
+                        && let Some(Some(prev)) = prev_map.get(&m)
+                    {
+                        Some((m, prev.clone()))
+                    } else {
+                        None
+                    }
                 }
-                let mut p = progress.lock().unwrap();
-                p.done = i + 1;
-                p.failed = failed;
-            }
+            });
+            let (done, failed) = {
+                let p = progress.lock().unwrap();
+                (p.done, p.failed)
+            };
             progress.lock().unwrap().running = false;
+            let restores: Vec<(String, String)> = results.into_iter().flatten().collect();
             tx.send(Msg::BulkFinished {
                 failed,
                 total,
-                cancelled: false,
+                cancelled: done < total,
                 restores,
             })
             .ok();
@@ -392,12 +439,10 @@ impl App {
         let tx = self.msg_tx.clone();
         thread::spawn(move || {
             let total = entry.restores.len();
-            let mut restored = 0usize;
-            for (m, d) in &entry.restores {
-                if mime::set_default(d, m).is_ok() {
-                    restored += 1;
-                }
-            }
+            let results: Vec<bool> = run_parallel(entry.restores, |(m, d): (String, String)| {
+                mime::set_default(&d, &m).is_ok()
+            });
+            let restored = results.into_iter().filter(|ok| *ok).count();
             tx.send(Msg::UndoDone { restored, total }).ok();
         });
     }
@@ -702,32 +747,54 @@ impl App {
             return;
         }
         ui.add_space(8.0);
+        let avail = ui.available_size();
+        ui.allocate_ui_with_layout(
+            avail,
+            egui::Layout::left_to_right(egui::Align::TOP),
+            |ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(240.0, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| self.ui_current_defaults(ui),
+                );
+                full_height_separator(ui);
+                let rest = ui.available_size();
+                ui.allocate_ui_with_layout(
+                    egui::vec2(rest.x, rest.y),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| self.ui_applications(ui),
+                );
+            },
+        );
+    }
 
-        if !self.current_defaults.is_empty() {
-            ui.label("Current defaults:");
-            let mut summary: HashMap<&str, usize> = HashMap::new();
-            for (_, d) in &self.current_defaults {
-                *summary.entry(d.as_deref().unwrap_or("(none)")).or_insert(0) += 1;
-            }
-            let mut items: Vec<(&str, usize)> = summary.into_iter().collect();
-            items.sort_by_key(|(id, count)| (std::cmp::Reverse(*count), *id));
-            for (id, count) in items.iter().take(10) {
-                let label = if *id == "(none)" {
-                    "(none)".to_string()
-                } else {
-                    format!("{} ({count})", self.app_name(id))
-                };
-                ui.label(format!("  • {label}"));
-            }
-            if items.len() > 10 {
-                ui.label(format!("  … and {} more", items.len() - 10));
-            }
-            ui.add_space(8.0);
-        } else if self.job.is_none() {
-            ui.label("Current default: (none)");
-            ui.add_space(8.0);
+    fn ui_current_defaults(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Current defaults");
+        ui.add_space(4.0);
+        if self.current_defaults.is_empty() {
+            ui.label(if self.job.is_none() { "(none)" } else { "…" });
+            return;
         }
+        let mut summary: HashMap<&str, usize> = HashMap::new();
+        for (_, d) in &self.current_defaults {
+            *summary.entry(d.as_deref().unwrap_or("(none)")).or_insert(0) += 1;
+        }
+        let mut items: Vec<(&str, usize)> = summary.into_iter().collect();
+        items.sort_by_key(|(id, count)| (std::cmp::Reverse(*count), *id));
+        for (id, count) in items.iter().take(10) {
+            let label = if *id == "(none)" {
+                "(none)".to_string()
+            } else {
+                format!("{} ({count})", self.app_name(id))
+            };
+            ui.label(format!("  • {label}"));
+        }
+        if items.len() > 10 {
+            ui.label(format!("  … and {} more", items.len() - 10));
+        }
+    }
 
+    fn ui_applications(&mut self, ui: &mut egui::Ui) {
         if let Some(job) = &self.job {
             let p = job.lock().unwrap();
             let frac = if p.total == 0 {
@@ -782,48 +849,54 @@ impl App {
             .iter()
             .map(|c| c.desktop_id.as_str())
             .collect();
-        egui::Grid::new("candidates")
-            .num_columns(3)
-            .spacing([8.0, 2.0])
-            .min_col_width(0.0)
+        egui::ScrollArea::vertical()
+            .id_salt("right_apps")
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                for c in &self.candidates {
-                    Self::candidate_row(
-                        ui,
-                        &c.name,
-                        &c.icon,
-                        &if cat_total > 0 {
-                            format!("{} / {}", c.coverage, cat_total)
-                        } else {
-                            c.desktop_id.clone()
-                        },
-                        &c.desktop_id,
-                        self.selected_candidate.as_deref() == Some(c.desktop_id.as_str()),
-                        &mut actions,
-                    );
-                }
-                if show_all {
-                    for app in &self.apps {
-                        if declaring_ids.contains(app.id.as_str()) {
-                            continue;
+                egui::Grid::new("candidates")
+                    .num_columns(3)
+                    .spacing([8.0, 2.0])
+                    .min_col_width(0.0)
+                    .show(ui, |ui| {
+                        for c in &self.candidates {
+                            Self::candidate_row(
+                                ui,
+                                &c.name,
+                                &c.icon,
+                                &if cat_total > 0 {
+                                    format!("{} / {}", c.coverage, cat_total)
+                                } else {
+                                    c.desktop_id.clone()
+                                },
+                                &c.desktop_id,
+                                self.selected_candidate.as_deref()
+                                    == Some(c.desktop_id.as_str()),
+                                &mut actions,
+                            );
                         }
-                        let icon = icons::icon_uri(&app.icon);
-                        let extra = if cat_total > 0 {
-                            "—".to_string()
-                        } else {
-                            app.id.clone()
-                        };
-                        Self::candidate_row(
-                            ui,
-                            &app.name,
-                            &icon,
-                            &extra,
-                            &app.id,
-                            self.selected_candidate.as_deref() == Some(app.id.as_str()),
-                            &mut actions,
-                        );
-                    }
-                }
+                        if show_all {
+                            for app in &self.apps {
+                                if declaring_ids.contains(app.id.as_str()) {
+                                    continue;
+                                }
+                                let icon = icons::icon_uri(&app.icon);
+                                let extra = if cat_total > 0 {
+                                    "—".to_string()
+                                } else {
+                                    app.id.clone()
+                                };
+                                Self::candidate_row(
+                                    ui,
+                                    &app.name,
+                                    &icon,
+                                    &extra,
+                                    &app.id,
+                                    self.selected_candidate.as_deref() == Some(app.id.as_str()),
+                                    &mut actions,
+                                );
+                            }
+                        }
+                    });
             });
         if let Some(id) = actions.clicked {
             self.selected_candidate = Some(id);
@@ -1069,12 +1142,7 @@ impl eframe::App for App {
             ui.add_space(8.0);
             full_width_separator(ui);
 
-            egui::ScrollArea::vertical()
-                .id_salt("right")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    self.ui_right_content(ui);
-                });
+            self.ui_right_content(ui);
         });
 
         self.ui_confirm_window(ui.ctx());
