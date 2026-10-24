@@ -738,6 +738,7 @@ impl App {
         let filtered = self.filtered_apps();
         let row_h = 28.0;
         let mut app_clicked: Option<usize> = None;
+        let mut open_desktop: Option<String> = None;
         egui::ScrollArea::vertical()
             .id_salt("apps")
             .auto_shrink([false, false])
@@ -758,10 +759,10 @@ impl App {
                             ui.set_min_height(row_h);
                             if let Some(uri) = icons::icon_uri(&app.icon) {
                                 ui.add(
-                                    egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)),
+                                    egui::Image::from_uri(uri).max_size(egui::vec2(32.0, 32.0)),
                                 );
                             } else {
-                                placeholder_icon(ui, &app.name, 24.0);
+                                placeholder_icon(ui, &app.name, 32.0);
                             }
                             ui.add_space(6.0);
                             let r = ui.add(
@@ -769,6 +770,12 @@ impl App {
                                     .truncate()
                                     .sense(egui::Sense::click()),
                             );
+                            r.clone().context_menu(|ui| {
+                                if ui.button("Open .desktop file").clicked() {
+                                    open_desktop = Some(app.id.clone());
+                                    ui.close();
+                                }
+                            });
                             if r.clicked() {
                                 hit = true;
                             }
@@ -781,6 +788,17 @@ impl App {
             });
         if let Some(i) = app_clicked {
             self.selected_app = Some(self.apps[i].id.clone());
+        }
+        if let Some(id) = open_desktop {
+            if let Some(path) = desktop::desktop_path(&id) {
+                eprintln!("[mimething] $ xdg-open {}", path.display());
+                thread::spawn(move || {
+                    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+                });
+                self.status = format!("Opening {id}…");
+            } else {
+                self.status = format!("Cannot find {id}");
+            }
         }
     }
 
@@ -890,9 +908,9 @@ impl App {
                 ui.add_space(8.0);
                 match app_icon.as_deref().and_then(icons::icon_uri) {
                     Some(uri) => {
-                        ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(20.0, 20.0)));
+                        ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(32.0, 32.0)));
                     }
-                    None => placeholder_icon(ui, &app_name, 20.0),
+                    None => placeholder_icon(ui, &app_name, 32.0),
                 }
                 ui.add_space(4.0);
                 ui.label(format!("{app_name} ({count})"));
