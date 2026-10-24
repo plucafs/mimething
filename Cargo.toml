@@ -3,6 +3,7 @@ name = "mimething"
 version = "1.0.0"
 edition = "2024"
 authors = ["plucafs <plucafz@proton.me>"]
+repository = "https://github.com/plucafs/mimething"
 
 [package.metadata.wix]
 upgrade-guid = "8D7D1A67-7FA1-4440-86F0-F331D33E71A9"
