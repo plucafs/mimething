@@ -145,6 +145,7 @@ pub struct App {
     selected_candidate: Option<String>,
     candidates: Vec<Candidate>,
     current_defaults: Vec<(String, Option<String>)>,
+    defaults_loading: bool,
     status: String,
     job: Option<Arc<Mutex<BulkProgress>>>,
     cancel_flag: Option<Arc<AtomicBool>>,
@@ -153,6 +154,7 @@ pub struct App {
     focus_search: bool,
     show_all_apps: bool,
     settings_open: bool,
+    about_open: bool,
     msg_rx: Option<mpsc::Receiver<Msg>>,
     msg_tx: mpsc::Sender<Msg>,
     settings: settings::Settings,
@@ -227,6 +229,7 @@ impl App {
             selected_candidate: None,
             candidates: Vec::new(),
             current_defaults: Vec::new(),
+            defaults_loading: false,
             status: String::new(),
             job: None,
             cancel_flag: None,
@@ -235,6 +238,7 @@ impl App {
             focus_search: false,
             show_all_apps: false,
             settings_open: false,
+            about_open: false,
             msg_rx: Some(msg_rx),
             msg_tx,
             settings,
@@ -316,6 +320,7 @@ impl App {
             match self.default_cache.get(&mime).cloned() {
                 Some(d) => self.current_defaults.push((mime, d)),
                 None => {
+                    self.defaults_loading = true;
                     let tx = self.msg_tx.clone();
                     thread::spawn(move || {
                         let d = mime::query_default(&mime);
@@ -324,6 +329,7 @@ impl App {
                 }
             }
         } else {
+            self.defaults_loading = true;
             let tx = self.msg_tx.clone();
             thread::spawn(move || {
                 let results = run_parallel(mimes, |m: String| {
@@ -472,6 +478,7 @@ impl App {
         while let Ok(msg) = rx.try_recv() {
             match msg {
                 Msg::DefaultsLoaded(results) => {
+                    self.defaults_loading = false;
                     let selected: HashSet<String> = self.selection_mimes().into_iter().collect();
                     for (m, d) in results {
                         self.default_cache.insert(m.clone(), d.clone());
@@ -615,7 +622,7 @@ impl App {
         ui.add_space(4.0);
         
         let filtered = self.filtered_mimes();
-        let row_h = 22.0;
+        let row_h = 14.0;
         let mut mime_clicked: Option<usize> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -635,42 +642,53 @@ impl App {
                         }
                         _ => "—".to_string(),
                     };
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(row_h);
-                        let mut hit = false;
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(150.0, row_h),
-                            egui::Layout::top_down(egui::Align::LEFT),
-                            |ui| {
-                                let r = ui
-                                    .add(
-                                        egui::Label::new(egui::RichText::new(&ext_text).weak())
+                    let frame = if selected {
+                        egui::Frame::new()
+                            .fill(ui.visuals().selection.bg_fill)
+                            .corner_radius(2.0)
+                    } else {
+                        egui::Frame::new()
+                    };
+                    let mut hit = false;
+                    frame.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(row_h);
+                            let e = ui
+                                .allocate_ui_with_layout(
+                                    egui::vec2(150.0, row_h),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&ext_text).weak(),
+                                            )
                                             .truncate()
                                             .sense(egui::Sense::click()),
-                                    );
-                                if r.clicked() {
-                                    hit = true;
-                                }
-                                if selected {
-                                    r.highlight();
-                                }
-                            },
-                        );
-                        let r = ui.add(
-                            egui::Label::new(m)
-                                .truncate()
-                                .sense(egui::Sense::click()),
-                        );
-                        if r.clicked() {
-                            hit = true;
-                        }
-                        if selected {
-                            r.highlight();
-                        }
-                        if hit {
-                            mime_clicked = Some(i);
-                        }
+                                        )
+                                    },
+                                )
+                                .inner;
+                            let t = ui
+                                .allocate_ui_with_layout(
+                                    egui::vec2(ui.available_width(), row_h),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.add(
+                                            egui::Label::new(m)
+                                                .truncate()
+                                                .sense(egui::Sense::click()),
+                                        )
+                                    },
+                                )
+                                .inner;
+                            if e.clicked() || t.clicked() {
+                                hit = true;
+                            }
+                        });
                     });
+                    if hit {
+                        mime_clicked = Some(i);
+                    }
                 }
             });
         if let Some(i) = mime_clicked {
@@ -704,26 +722,38 @@ impl App {
                 for &i in &filtered[range] {
                     let app = &self.apps[i];
                     let selected = self.selected_app.as_deref() == Some(app.id.as_str());
-                    ui.horizontal(|ui| {
-                        ui.set_min_height(row_h);
-                        if let Some(uri) = icons::icon_uri(&app.icon) {
-                            ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
-                        } else {
-                            ui.label("  ");
-                        }
-                        ui.add_space(6.0);
-                        let r = ui.add(
-                            egui::Label::new(&app.name)
-                                .truncate()
-                                .sense(egui::Sense::click()),
-                        );
-                        if r.clicked() {
-                            app_clicked = Some(i);
-                        }
-                        if selected {
-                            r.highlight();
-                        }
+                    let frame = if selected {
+                        egui::Frame::new()
+                            .fill(ui.visuals().selection.bg_fill)
+                            .corner_radius(2.0)
+                    } else {
+                        egui::Frame::new()
+                    };
+                    let mut hit = false;
+                    frame.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.set_min_height(row_h);
+                            if let Some(uri) = icons::icon_uri(&app.icon) {
+                                ui.add(
+                                    egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)),
+                                );
+                            } else {
+                                ui.label("  ");
+                            }
+                            ui.add_space(6.0);
+                            let r = ui.add(
+                                egui::Label::new(&app.name)
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            );
+                            if r.clicked() {
+                                hit = true;
+                            }
+                        });
                     });
+                    if hit {
+                        app_clicked = Some(i);
+                    }
                 }
             });
         if let Some(i) = app_clicked {
@@ -808,8 +838,14 @@ impl App {
     fn ui_current_defaults(&mut self, ui: &mut egui::Ui) {
         ui.heading("Current defaults");
         ui.add_space(4.0);
+        if self.defaults_loading {
+            let t = ui.input(|i| i.time);
+            let dots = ["·", "··", "···"][(t * 3.0) as usize % 3];
+            ui.label(format!("Loading {dots}"));
+            return;
+        }
         if self.current_defaults.is_empty() {
-            ui.label(if self.job.is_none() { "(none)" } else { "…" });
+            ui.label("(none)");
             return;
         }
         let mut summary: HashMap<&str, usize> = HashMap::new();
@@ -819,12 +855,46 @@ impl App {
         let mut items: Vec<(&str, usize)> = summary.into_iter().collect();
         items.sort_by_key(|(id, count)| (std::cmp::Reverse(*count), *id));
         for (id, count) in items.iter().take(10) {
-            let label = if *id == "(none)" {
-                "(none)".to_string()
-            } else {
-                format!("{} ({count})", self.app_name(id))
-            };
-            ui.label(format!("  • {label}"));
+            if *id == "(none)" {
+                ui.label("  • (none)");
+                continue;
+            }
+            let icon = self
+                .apps
+                .iter()
+                .find(|a| a.id == *id)
+                .and_then(|a| icons::icon_uri(&a.icon));
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                if let Some(uri) = &icon {
+                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(20.0, 20.0)));
+                } else {
+                    let initial = self
+                        .app_name(id)
+                        .chars()
+                        .next()
+                        .unwrap_or('?')
+                        .to_uppercase()
+                        .to_string();
+                    egui::Frame::new()
+                        .fill(ui.visuals().faint_bg_color)
+                        .corner_radius(4.0)
+                        .inner_margin(0.0)
+                        .show(ui, |ui| {
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(20.0, 20.0),
+                                egui::Layout::centered_and_justified(
+                                    egui::Direction::TopDown,
+                                ),
+                                |ui| {
+                                    ui.label(egui::RichText::new(initial).small());
+                                },
+                            );
+                        });
+                }
+                ui.add_space(4.0);
+                ui.label(format!("{} ({count})", self.app_name(id)));
+            });
         }
         if items.len() > 10 {
             ui.label(format!("  … and {} more", items.len() - 10));
@@ -1087,6 +1157,27 @@ impl App {
         self.settings_open = open;
     }
 
+    fn ui_about_window(&mut self, ctx: &egui::Context) {
+        if !self.about_open {
+            return;
+        }
+        let mut open = self.about_open;
+        egui::Window::new("About")
+            .id(egui::Id::new("about_window"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.heading(format!("mimething {}", env!("CARGO_PKG_VERSION")));
+                ui.add_space(4.0);
+                ui.label("Change which application opens each file type on Linux.");
+                ui.add_space(8.0);
+                ui.hyperlink("https://github.com/plucafs/mimething");
+            });
+        self.about_open = open;
+    }
+
     fn ui_confirm_window(&mut self, ctx: &egui::Context) {
         if self.pending_confirm.is_none() {
             return;
@@ -1130,6 +1221,9 @@ impl App {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_messages(ctx);
+        if self.defaults_loading {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1144,6 +1238,17 @@ impl eframe::App for App {
                         self.settings_open = true;
                         ui.close();
                     }
+                    if ui.button("Export script").clicked() {
+                        match mime::export_defaults_script() {
+                            Ok((path, n)) => {
+                                self.status =
+                                    format!("Exported {n} defaults to {}", path.display());
+                            }
+                            Err(e) => self.status = format!("Export failed: {e}"),
+                        }
+                        ui.close();
+                    }
+                    ui.separator();
                     if ui.button("Quit").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -1159,6 +1264,12 @@ impl eframe::App for App {
                         self.apply_theme(&ctx, new_theme);
                     }
                 });
+                egui::containers::menu::MenuButton::new("Help").ui(ui, |ui| {
+                    if ui.button("About").clicked() {
+                        self.about_open = true;
+                        ui.close();
+                    }
+                });
             });
         });
 
@@ -1172,7 +1283,8 @@ impl eframe::App for App {
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(format!(
-                    "{} MIME types · {} applications",
+                    "mimething {} · {} MIME types · {} applications",
+                    env!("CARGO_PKG_VERSION"),
                     self.all_mimes.len(),
                     self.apps.len()
                 ));
@@ -1258,5 +1370,6 @@ impl eframe::App for App {
 
         self.ui_confirm_window(ui.ctx());
         self.ui_settings_window(ui.ctx());
+        self.ui_about_window(ui.ctx());
     }
 }
