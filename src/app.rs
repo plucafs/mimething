@@ -391,46 +391,6 @@ impl App {
         if matches!(self.selection, Selection::None) {
             return;
         }
-
-        let title = match self.selection {
-            Selection::Category(i) => {
-                format!("{} — set default for all types", self.categories[i].name)
-            }
-            Selection::Mime(i) => self.all_mimes[i].clone(),
-            Selection::None => unreachable!(),
-        };
-        ui.add_space(8.0);
-        let button_text = if matches!(self.selection, Selection::Category(_)) {
-            let total = match self.selection {
-                Selection::Category(i) => self.categories[i].mimes.len(),
-                _ => 0,
-            };
-            format!("Set as default for all {total} types")
-        } else {
-            "Set as default".to_string()
-        };
-        let can_apply = self.selected_candidate.is_some() && !self.job.is_some();
-
-        ui.heading(&title);
-        ui.add_space(4.0);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.set_max_width(160.0);
-            if ui
-                .add_enabled(
-                    can_apply,
-                    egui::Button::new(button_text),
-                )
-                .clicked()
-            {
-                let desktop_id = self.selected_candidate.clone().unwrap();
-                let mimes = self.selection_mimes();
-                if mimes.len() == 1 {
-                    self.set_single(&desktop_id, &mimes[0]);
-                } else {
-                    self.set_category(&desktop_id, &mimes);
-                }
-            }
-        });
         ui.add_space(8.0);
 
         if !self.current_defaults.is_empty() {
@@ -596,6 +556,47 @@ impl eframe::App for App {
                 });
                 return;
             }
+
+            let title = match self.selection {
+                Selection::Category(i) => self.categories[i].name.to_string(),
+                Selection::Mime(i) => self.all_mimes[i].clone(),
+                Selection::None => unreachable!(),
+            };
+            let button_text = if matches!(self.selection, Selection::Category(_)) {
+                let total = match self.selection {
+                    Selection::Category(i) => self.categories[i].mimes.len(),
+                    _ => 0,
+                };
+                format!("Set as default for all {total} types")
+            } else {
+                "Set as default".to_string()
+            };
+            let can_apply = self.selected_candidate.is_some() && self.job.is_none();
+
+            ui.heading(&title);
+            // ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if !can_apply {
+                        ui.disable();
+                    }
+                    if ui
+                        .add_sized([200.0, 28.0], egui::Button::new(&button_text))
+                        .clicked()
+                    {
+                        let desktop_id = self.selected_candidate.clone().unwrap();
+                        let mimes = self.selection_mimes();
+                        if mimes.len() == 1 {
+                            self.set_single(&desktop_id, &mimes[0]);
+                        } else {
+                            self.set_category(&desktop_id, &mimes);
+                        }
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            ui.separator();
+
             egui::ScrollArea::vertical()
                 .id_salt("right")
                 .auto_shrink([false, false])
