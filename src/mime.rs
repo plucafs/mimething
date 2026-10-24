@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn log_cmd(cmd: &str) {
-    eprintln!("[defeditor] $ {cmd}");
+    eprintln!("[mimething] $ {cmd}");
 }
 
 fn data_dirs() -> Vec<PathBuf> {
@@ -90,7 +90,7 @@ pub fn query_default(mime: &str) -> Option<String> {
     }
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let s = if s.is_empty() || s == "no default" { None } else { Some(s) };
-    eprintln!("[defeditor]  ↳ {}", s.as_deref().unwrap_or("(no default)"));
+    eprintln!("[mimething]  ↳ {}", s.as_deref().unwrap_or("(no default)"));
     s
 }
 

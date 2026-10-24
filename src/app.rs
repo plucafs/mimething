@@ -152,6 +152,7 @@ pub struct App {
     pending_confirm: Option<PendingConfirm>,
     focus_search: bool,
     show_all_apps: bool,
+    settings_open: bool,
     msg_rx: Option<mpsc::Receiver<Msg>>,
     msg_tx: mpsc::Sender<Msg>,
     settings: settings::Settings,
@@ -233,6 +234,7 @@ impl App {
             pending_confirm: None,
             focus_search: false,
             show_all_apps: false,
+            settings_open: false,
             msg_rx: Some(msg_rx),
             msg_tx,
             settings,
@@ -268,21 +270,6 @@ impl App {
             })
             .map(|(i, _)| i)
             .collect()
-    }
-
-    fn mime_label(&self, m: &str) -> String {
-        match self.mime_exts.get(m) {
-            Some(exts) if !exts.is_empty() => {
-                let shown: Vec<String> = exts.iter().take(3).map(|e| format!("*.{e}")).collect();
-                let suffix = if exts.len() > 3 {
-                    format!("{}, …", shown.join(", "))
-                } else {
-                    shown.join(", ")
-                };
-                format!("{m}  ({suffix})")
-            }
-            _ => m.to_string(),
-        }
     }
 
     fn selection_mimes(&self) -> Vec<String> {
@@ -586,30 +573,27 @@ impl App {
         ui.heading("Categories");
         ui.add_space(4.0);
         let mut cat_clicked: Option<usize> = None;
-        egui::Grid::new("categories")
-            .num_columns(2)
-            .spacing([8.0, 2.0])
-            .min_col_width(0.0)
-            .show(ui, |ui| {
-                for (i, cat) in self.categories.iter().enumerate() {
-                    if let Some(uri) = &cat.icon {
-                        ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
-                    } else {
-                        ui.label("  ");
-                    }
-                    let selected = self.selection == Selection::Category(i);
-                    if ui
-                        .selectable_label(
-                            selected,
-                            format!("{}  ({} types)", cat.name, cat.mimes.len()),
-                        )
-                        .clicked()
-                    {
-                        cat_clicked = Some(i);
-                    }
-                    ui.end_row();
+        for (i, cat) in self.categories.iter().enumerate() {
+            let selected = self.selection == Selection::Category(i);
+            ui.horizontal(|ui| {
+                ui.set_min_height(26.0);
+                if let Some(uri) = &cat.icon {
+                    ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
+                } else {
+                    ui.label("  ");
+                }
+                ui.add_space(6.0);
+                if ui
+                    .selectable_label(
+                        selected,
+                        format!("{}  ({} types)", cat.name, cat.mimes.len()),
+                    )
+                    .clicked()
+                {
+                    cat_clicked = Some(i);
                 }
             });
+        }
         if let Some(i) = cat_clicked {
             self.selection = Selection::Category(i);
             let mimes = self.categories[i].mimes.clone();
@@ -629,9 +613,9 @@ impl App {
             self.focus_search = false;
         }
         ui.add_space(4.0);
-
+        
         let filtered = self.filtered_mimes();
-        let row_h = 20.0;
+        let row_h = 22.0;
         let mut mime_clicked: Option<usize> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -639,10 +623,54 @@ impl App {
                 for &i in &filtered[range] {
                     let m = &self.all_mimes[i];
                     let selected = self.selection == Selection::Mime(i);
-                    let label = self.mime_label(m);
-                    if ui.selectable_label(selected, label).clicked() {
-                        mime_clicked = Some(i);
-                    }
+                    let ext_text = match self.mime_exts.get(m) {
+                        Some(e) if !e.is_empty() => {
+                            let shown: Vec<String> =
+                                e.iter().take(4).map(|x| format!("*.{x}")).collect();
+                            if e.len() > 4 {
+                                format!("{}, …", shown.join(", "))
+                            } else {
+                                shown.join(", ")
+                            }
+                        }
+                        _ => "—".to_string(),
+                    };
+                    ui.horizontal(|ui| {
+                        ui.set_min_height(row_h);
+                        let mut hit = false;
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(150.0, row_h),
+                            egui::Layout::top_down(egui::Align::LEFT),
+                            |ui| {
+                                let r = ui
+                                    .add(
+                                        egui::Label::new(egui::RichText::new(&ext_text).weak())
+                                            .truncate()
+                                            .sense(egui::Sense::click()),
+                                    );
+                                if r.clicked() {
+                                    hit = true;
+                                }
+                                if selected {
+                                    r.highlight();
+                                }
+                            },
+                        );
+                        let r = ui.add(
+                            egui::Label::new(m)
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                        );
+                        if r.clicked() {
+                            hit = true;
+                        }
+                        if selected {
+                            r.highlight();
+                        }
+                        if hit {
+                            mime_clicked = Some(i);
+                        }
+                    });
                 }
             });
         if let Some(i) = mime_clicked {
@@ -677,14 +705,23 @@ impl App {
                     let app = &self.apps[i];
                     let selected = self.selected_app.as_deref() == Some(app.id.as_str());
                     ui.horizontal(|ui| {
+                        ui.set_min_height(row_h);
                         if let Some(uri) = icons::icon_uri(&app.icon) {
                             ui.add(egui::Image::from_uri(uri).max_size(egui::vec2(24.0, 24.0)));
                         } else {
                             ui.label("  ");
                         }
                         ui.add_space(6.0);
-                        if ui.selectable_label(selected, &app.name).clicked() {
+                        let r = ui.add(
+                            egui::Label::new(&app.name)
+                                .truncate()
+                                .sense(egui::Sense::click()),
+                        );
+                        if r.clicked() {
                             app_clicked = Some(i);
+                        }
+                        if selected {
+                            r.highlight();
                         }
                     });
                 }
@@ -908,7 +945,7 @@ impl App {
             }
             Some(CandMenu::OpenDesktop(id)) => {
                 if let Some(path) = desktop::desktop_path(&id) {
-                    eprintln!("[defeditor] $ xdg-open {}", path.display());
+                    eprintln!("[mimething] $ xdg-open {}", path.display());
                     thread::spawn(move || {
                         let _ = std::process::Command::new("xdg-open").arg(path).spawn();
                     });
@@ -939,9 +976,32 @@ impl App {
         } else {
             ui.label("  ");
         }
-        let resp1 = ui.selectable_label(selected, name);
-        let resp2 = ui.selectable_label(selected, egui::RichText::new(extra).weak());
-        resp1.context_menu(|ui| {
+        let resp1 = ui
+            .allocate_ui_with_layout(
+                egui::vec2(220.0, 20.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(name)
+                            .truncate()
+                            .sense(egui::Sense::click()),
+                    )
+                },
+            )
+            .inner;
+        let resp2 = ui.allocate_ui_with_layout(
+            egui::vec2(90.0, 20.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(extra).weak())
+                        .truncate()
+                        .sense(egui::Sense::click()),
+                )
+            },
+        );
+        let resp2 = resp2.inner;
+        resp1.clone().context_menu(|ui| {
             if ui.button("Set as default").clicked() {
                 actions.menu = Some(CandMenu::SetDefault(desktop_id.to_string()));
                 ui.close();
@@ -958,7 +1018,73 @@ impl App {
         if resp1.clicked() || resp2.clicked() {
             actions.clicked = Some(desktop_id.to_string());
         }
+        if selected {
+            resp1.highlight();
+            resp2.highlight();
+        }
         ui.end_row();
+    }
+
+    fn apply_theme(&mut self, ctx: &egui::Context, theme: egui::Theme) {
+        ctx.set_theme(theme);
+        self.settings.theme = Some(theme);
+        settings::save(&self.settings);
+    }
+
+    fn apply_scale(&mut self, ctx: &egui::Context, scale: f32) {
+        ctx.set_pixels_per_point(scale);
+        self.settings.scale = Some(scale);
+        settings::save(&self.settings);
+    }
+
+    fn ui_settings_window(&mut self, ctx: &egui::Context) {
+        if !self.settings_open {
+            return;
+        }
+        let mut open = self.settings_open;
+        egui::Window::new("Settings")
+            .id(egui::Id::new("settings_window"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                let theme = ctx.theme();
+                ui.heading("Theme");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(theme == egui::Theme::Dark, "Dark")
+                        .clicked()
+                    {
+                        self.apply_theme(ctx, egui::Theme::Dark);
+                    }
+                    if ui
+                        .selectable_label(theme == egui::Theme::Light, "Light")
+                        .clicked()
+                    {
+                        self.apply_theme(ctx, egui::Theme::Light);
+                    }
+                });
+                ui.add_space(8.0);
+                ui.heading("UI scale");
+                ui.add_space(4.0);
+                let current = ctx.pixels_per_point();
+                ui.horizontal(|ui| {
+                    for step in [1.0_f32, 1.25, 1.5, 1.75, 2.0] {
+                        if ui
+                            .selectable_label(
+                                (current - step).abs() < 0.03,
+                                format!("{step:.2}x"),
+                            )
+                            .clicked()
+                        {
+                            self.apply_scale(ctx, step);
+                        }
+                    }
+                });
+            });
+        self.settings_open = open;
     }
 
     fn ui_confirm_window(&mut self, ctx: &egui::Context) {
@@ -1014,6 +1140,10 @@ impl eframe::App for App {
         egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 egui::containers::menu::MenuButton::new("File").ui(ui, |ui| {
+                    if ui.button("Settings").clicked() {
+                        self.settings_open = true;
+                        ui.close();
+                    }
                     if ui.button("Quit").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -1026,21 +1156,7 @@ impl eframe::App for App {
                         } else {
                             egui::Theme::Dark
                         };
-                        ctx.set_theme(new_theme);
-                        self.settings.theme = Some(new_theme);
-                        settings::save(&self.settings);
-                    }
-                    let ctx = ui.ctx().clone();
-                    let current = ctx.pixels_per_point();
-                    let steps = [1.0_f32, 1.25, 1.5, 1.75, 2.0];
-                    let next = *steps
-                        .iter()
-                        .find(|s| **s > current + 0.03)
-                        .unwrap_or(&steps[0]);
-                    if ui.button("Scale UI").clicked() {
-                        ctx.set_pixels_per_point(next);
-                        self.settings.scale = Some(next);
-                        settings::save(&self.settings);
+                        self.apply_theme(&ctx, new_theme);
                     }
                 });
             });
@@ -1050,12 +1166,7 @@ impl eframe::App for App {
             .resizable(true)
             .min_size(240.0)
             .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("left")
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        self.ui_left(ui);
-                    });
+                self.ui_left(ui);
             });
 
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -1146,5 +1257,6 @@ impl eframe::App for App {
         });
 
         self.ui_confirm_window(ui.ctx());
+        self.ui_settings_window(ui.ctx());
     }
 }

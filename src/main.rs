@@ -12,11 +12,11 @@ fn main() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 720.0])
             .with_min_inner_size([800.0, 500.0])
-            .with_title("Default Apps Editor"),
+            .with_title("mimething"),
         ..Default::default()
     };
     eframe::run_native(
-        "Default Apps Editor",
+        "mimething",
         options,
         Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
     )

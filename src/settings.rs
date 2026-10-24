@@ -13,7 +13,7 @@ fn config_path() -> Option<PathBuf> {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".config")))?;
-    let dir = dir.join("defeditor");
+    let dir = dir.join("mimething");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("settings.conf"))
 }
