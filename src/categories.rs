@@ -5,16 +5,49 @@ pub enum CategoryKind {
 
 pub struct CategoryDef {
     pub name: &'static str,
+    /// Icon name resolved from the hicolor theme (see `icons::icon_uri`).
+    pub icon: &'static str,
     pub kind: CategoryKind,
+    /// Extra MIME types appended to the category (e.g. application/x-desktop
+    /// under Text: a .desktop file is a text file you edit).
+    pub extras: &'static [&'static str],
 }
 
 pub const CATEGORIES: &[CategoryDef] = &[
-    CategoryDef { name: "Images", kind: CategoryKind::Prefix("image/") },
-    CategoryDef { name: "Audio", kind: CategoryKind::Prefix("audio/") },
-    CategoryDef { name: "Video", kind: CategoryKind::Prefix("video/") },
-    CategoryDef { name: "Text", kind: CategoryKind::Prefix("text/") },
+    CategoryDef {
+        name: "Images",
+        icon: "image-x-generic",
+        kind: CategoryKind::Prefix("image/"),
+        extras: &[],
+    },
+    CategoryDef {
+        name: "Audio",
+        icon: "audio-x-generic",
+        kind: CategoryKind::Prefix("audio/"),
+        extras: &[],
+    },
+    CategoryDef {
+        name: "Video",
+        icon: "video-x-generic",
+        kind: CategoryKind::Prefix("video/"),
+        extras: &[],
+    },
+    CategoryDef {
+        name: "Text",
+        icon: "text-x-generic",
+        kind: CategoryKind::Prefix("text/"),
+        extras: &[
+            "application/x-desktop",
+            "application/json",
+            "application/xml",
+            "application/x-yaml",
+            "application/toml",
+            "application/javascript",
+        ],
+    },
     CategoryDef {
         name: "Documents",
+        icon: "x-office-document",
         kind: CategoryKind::Explicit(&[
             "application/pdf",
             "application/rtf",
@@ -33,9 +66,11 @@ pub const CATEGORIES: &[CategoryDef] = &[
             "application/x-mobipocket-ebook",
             "application/vnd.amazon.ebook",
         ]),
+        extras: &[],
     },
     CategoryDef {
         name: "Archives",
+        icon: "package-x-generic",
         kind: CategoryKind::Explicit(&[
             "application/zip",
             "application/x-tar",
@@ -52,5 +87,6 @@ pub const CATEGORIES: &[CategoryDef] = &[
             "application/x-lzma",
             "application/x-brotli",
         ]),
+        extras: &[],
     },
 ];

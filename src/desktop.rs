@@ -93,3 +93,13 @@ pub fn load_apps() -> Vec<DesktopApp> {
     apps.sort_by_key(|a| a.name.to_lowercase());
     apps
 }
+
+pub fn desktop_path(id: &str) -> Option<PathBuf> {
+    for dir in applications_dirs() {
+        let p = dir.join(id);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
