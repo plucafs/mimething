@@ -1,6 +1,6 @@
 [package]
 name = "mimething"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 authors = ["plucafs <plucafz@proton.me>"]
 repository = "https://github.com/plucafs/mimething"
